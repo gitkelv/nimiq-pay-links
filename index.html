@@ -156,25 +156,36 @@ const Wallet = {
   async init() {
     try {
       const sdk = await import('https://esm.sh/@nimiq/mini-app-sdk');
-      this.nimiq = await Promise.race([sdk.init(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))]);
+      this.nimiq = await Promise.race([sdk.init(), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 6000))]);
       this.live = true;
-    } catch { this.live = false; }
-    const m = $('#mode'); m.textContent = this.live ? 'Nimiq Pay' : 'Preview'; m.classList.toggle('live', this.live);
+    } catch {
+      // Fallback: use the provider Nimiq Pay injects directly, if the SDK could not load.
+      for (let i = 0; i < 30 && !window.nimiq; i++) await sleep(200);
+      if (window.nimiq) { this.nimiq = window.nimiq; this.live = true; }
+    }
+    const net = window.nimiqPay && window.nimiqPay.network;   // 'mainnet' | 'testnet' (newer Nimiq Pay only)
+    const m = $('#mode');
+    m.textContent = this.live ? (net === 'testnet' ? 'Nimiq Pay · Testnet' : 'Nimiq Pay') : 'Preview';
+    m.classList.toggle('live', this.live);
     return this.live;
+  },
+  unwrap(r) {   // the raw provider may return { error } instead of throwing
+    if (r && typeof r === 'object' && r.error) throw Object.assign(new Error(r.error.message || 'Wallet error'), { type: r.error.type });
+    return r;
   },
   async account() {
     if (!this.live) { await sleep(400); return DEMO_ADDR; }
-    const [a] = await this.nimiq.listAccounts(); return a;
+    const [a] = this.unwrap(await this.nimiq.listAccounts()); return a;
   },
   async balanceNim(addr) {
-    if (this.live && typeof this.nimiq.getBalance === 'function') return (await this.nimiq.getBalance(addr)) / LUNA;
+    if (this.live && typeof this.nimiq.getBalance === 'function') return this.unwrap(await this.nimiq.getBalance(addr)) / LUNA;
     return null;
   },
   async pay(recipient, nim, msg) {
     const value = Math.round(nim * LUNA);
     if (!this.live) { await sleep(1100); return Array.from({ length: 64 }, () => '0123456789abcdef'[Math.random() * 16 | 0]).join(''); }
-    return msg ? this.nimiq.sendBasicTransactionWithData({ recipient, value, data: msg })
-               : this.nimiq.sendBasicTransaction({ recipient, value });
+    return this.unwrap(msg ? await this.nimiq.sendBasicTransactionWithData({ recipient, value, data: msg })
+                           : await this.nimiq.sendBasicTransaction({ recipient, value }));
   },
 };
 function explain(e) {
